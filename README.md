@@ -235,5 +235,3 @@ npm run build
 cd backend
 pytest
 ```
-#   j o b - f i n d e r  
- 
