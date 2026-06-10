@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import init_db
+from app.middleware.cors import setup_cors
+from app.middleware.logging_middleware import LoggingMiddleware
 from app.routers import users, resumes, jobs, ai, admin, logs
 
 settings = get_settings()
@@ -13,6 +14,22 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
     await init_db()
+
+    # Seed mock jobs if database is empty
+    try:
+        from app.workers.job_scraper import scrape_and_store_jobs
+        from app.database import async_session
+        from sqlalchemy import select, func
+        from app.models.job import Job
+
+        async with async_session() as session:
+            count = await session.execute(select(func.count(Job.id)))
+            if count.scalar() == 0:
+                print("📦 Seeding database with mock jobs...")
+                await scrape_and_store_jobs(use_mock=True)
+    except Exception as e:
+        print(f"⚠️ Job seeding skipped: {e}")
+
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} started")
     yield
     # Shutdown
@@ -27,14 +44,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL, "http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Middleware (order matters: last added = first executed)
+setup_cors(app)
+app.add_middleware(LoggingMiddleware)
 
 # Routers
 app.include_router(users.router, prefix=f"{settings.API_PREFIX}/users", tags=["Users"])
